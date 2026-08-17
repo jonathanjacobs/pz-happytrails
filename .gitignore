@@ -1,41 +1,46 @@
-# Compiled Lua sources
+# Project Zomboid / Lua development
 luac.out
-
-# luarocks build files
 *.src.rock
+
+# Packaged release/test artifacts
 *.zip
+*.7z
+*.rar
 *.tar.gz
 
-# Object files
-*.o
-*.os
-*.ko
-*.obj
-*.elf
+# Logs and local runtime artifacts
+*.log
+Logs/
+logs/
+debug/
+cache/
 
-# Precompiled Headers
-*.gch
-*.pch
+# OS-generated files
+.DS_Store
+Thumbs.db
+desktop.ini
 
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-*.def
-*.exp
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+*.temp
+*.orig
 
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
+# Python helper tooling
+__pycache__/
+*.py[cod]
+.venv/
+venv/
 
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+# Node helper tooling
+node_modules/
 
+# Local environment files
+.env
+.env.*
+!.env.example
