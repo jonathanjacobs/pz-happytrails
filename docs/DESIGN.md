@@ -1,240 +1,336 @@
-# Happy Trails Design
+# Happy Trails Design Space
 
 ## Status
 
-Working design for pre-alpha feasibility work. Nothing in this document should be treated as validated engine behavior until confirmed by a spike or test result.
+Pre-alpha design-space document.
+
+This document intentionally records **options, constraints, and questions**, not a committed architecture. Nothing here should be treated as validated engine behavior until confirmed by a spike or test result. Durable choices should be made only after comparative evidence and then captured in ADRs.
 
 ## Design objective
 
-Represent repeated travel as a bounded, persistent environmental state transition rather than as continuous terrain deformation.
+Represent repeated travel as persistent environmental change while keeping client, server, persistence, world-object, and network costs bounded.
 
-The preferred architecture should be:
+The implementation should remain flexible enough to support higher-fidelity features later without requiring the first release to pay their runtime cost.
 
-- local to recently traveled squares;
-- server-authoritative for durable world changes;
-- lazy rather than scan-based;
-- tolerant of unknown terrain and third-party content;
-- visually expressive without requiring custom engine modifications.
+## Non-negotiable constraints
 
-## Candidate state model
+Any eventual design should:
 
-A candidate per-square wear model is:
+- process only relevant movement rather than broad world areas;
+- keep durable mutations server-owned;
+- avoid unbounded historical state;
+- allow work to be reduced by performance/fidelity settings;
+- avoid coupling core wear semantics to a single rendering technique;
+- keep terrain classification replaceable as Build 42 knowledge improves;
+- allow vegetation destruction to be enabled, disabled, or deferred independently of track wear;
+- fail closed for unknown/destructive cases;
+- make performance-sensitive work measurable.
 
-```text
-0 = untouched
-1 = disturbed / flattened
-2 = visible track
-3 = established rut
-4 = heavily worn path
-```
+## Open dimension 1 — traffic representation
 
-The actual state count may change after visual and API feasibility is known.
+Several representations remain plausible.
 
-A square should only carry explicit Happy Trails state if vanilla world state cannot encode the same result directly.
+### Option A — bounded per-square wear score
 
-## Candidate wear accumulator
+A modified square stores a bounded value and possibly a last-update timestamp.
 
-Instead of storing raw pass counts indefinitely, use a bounded score:
+Conceptually:
 
 ```text
-WearScore = clamp(0, MaxWear, WearScore + PassageWeight)
+Wear = clamp(0, MaxWear, Wear + PassageWeight)
 ```
 
-Possible passage inputs:
+Advantages:
 
-- base vehicle passage weight;
-- vehicle mass/class modifier;
-- speed modifier;
-- wet/snow surface modifier;
-- repeat-pass threshold hysteresis.
+- natural progressive wear;
+- threshold-based visual mutation;
+- repeated traffic can be coalesced;
+- raw pass history need not be retained.
 
-State transitions occur only when the wear score crosses configured thresholds.
+Risks/questions:
 
-## Recovery model
+- persistence overhead per modified square;
+- synchronization behavior of metadata;
+- recovery bookkeeping.
 
-Recovery should be evaluated lazily when a modified square is revisited, loaded, or otherwise touched by the system.
+### Option B — discrete state only
 
-Candidate formulation:
+Squares store only their current wear tier and enough information to know when a transition is allowed.
 
-```text
-RecoveredWear = max(0,
-    StoredWear - RecoveryRate * ElapsedWorldTime)
-```
+Advantages:
 
-This avoids continuous global processing.
+- smaller durable state;
+- potentially simpler persistence.
 
-If terrain visuals themselves can encode durable state without custom metadata, recovery may instead use object age/timestamp data stored only for squares that can recover.
+Risks/questions:
 
-## Vehicle sampling
+- may require additional transient counters;
+- less granular tuning/recovery.
 
-The first spike should determine the least expensive reliable trigger for vehicle movement.
+### Option C — aggregated route/chunk state
+
+Traffic is aggregated at a coarser granularity and materialized into square-level visuals only when needed.
+
+Advantages:
+
+- potentially lower persistence overhead on very long routes.
+
+Risks/questions:
+
+- may lose convincing local track geometry;
+- depends on available chunk/region persistence hooks;
+- more complex reconstruction.
+
+No option is selected yet.
+
+## Open dimension 2 — vehicle observation
 
 Candidate approaches:
 
-1. vehicle update/event callback;
-2. player update while seated in a moving vehicle;
-3. periodic server sampling of active vehicles only;
-4. client-side movement reporting with server validation, only if necessary.
+### A. Server-side active-vehicle sampling
 
-The design should not process every vehicle every game tick unless measurements show that this is safe and unavoidable.
+The server periodically samples only moving/relevant vehicles and converts traveled distance into candidate affected squares.
 
-A distance threshold should prevent repeated processing while a vehicle remains on the same square.
+Potential strengths:
 
-## Track footprint
+- simple authority model;
+- little or no custom client reporting.
 
-The MVP may begin with a coarse footprint:
+Potential costs:
 
-```text
-vehicle center square + direction-derived adjacent wheel path squares
-```
+- server-side sampling load scales with moving vehicles;
+- cadence must avoid gaps at high speed.
 
-A later implementation may derive actual wheel positions if accessible through stable APIs.
+### B. Client passage reporting with server validation
 
-Visual plausibility is more important than physically exact tire geometry for the first release.
+The local driving client derives compact passage candidates and sends them in batches. The server validates and owns durable state transitions.
 
-## Terrain classification
+Potential strengths:
 
-Terrain should be classified through a dedicated adapter rather than scattered sprite-name checks throughout the code.
+- distributes movement geometry work to clients;
+- can naturally follow local vehicle updates.
 
-Conceptual interface:
+Potential costs:
 
-```lua
-classifySurface(square) -> surfaceClass | nil
-```
+- additional network protocol;
+- validation must be strong enough to prevent duplicate or implausible mutations;
+- server validation must not duplicate all client work.
 
-Possible classes:
+### C. Native/event-assisted hybrid
 
-```text
-grass
-dirt
-forest
-mud
-snow
-ineligible
-unknown
-```
+Use Build 42 collision/events/properties for what the engine already knows, and sample only what remains necessary for trail wear.
 
-Unknown defaults to no mutation.
+Potential strengths:
 
-## Visual mutation strategy
+- potentially lowest Lua-side work;
+- may provide more accurate collision behavior.
 
-SPIKE-001 should compare these approaches:
+Potential costs:
 
-- changing floor tiles;
-- adding/removing world objects;
-- overlay sprites;
-- custom tiles/sprites;
-- supported decal-like objects if available.
+- undocumented/native behavior may be difficult to generalize;
+- event coverage may not provide continuous wheel-path information.
+
+SPIKE-001 should benchmark these approaches before an ADR selects one.
+
+## Open dimension 3 — affected vehicle footprint
+
+Possible fidelity levels include:
+
+1. center-square sampling;
+2. centerline plus width approximation;
+3. oriented vehicle bounding footprint;
+4. approximate left/right wheel paths;
+5. actual wheel positions if stable APIs expose them.
+
+A lower-cost representation may be adequate for wear accumulation while higher-fidelity visuals are generated only at thresholds.
+
+The state model should not depend on exact wheel coordinates unless testing shows they are both inexpensive and reliable.
+
+## Open dimension 4 — terrain classification
+
+Possible evidence sources include:
+
+- floor sprite names;
+- tile/sprite properties;
+- zones;
+- erosion/natural-floor metadata;
+- bounded allow/deny tables;
+- combinations of the above.
+
+Classification should be centralized behind a replaceable interface. Unknown terrain should produce no destructive mutation.
+
+Performance questions:
+
+- which properties are cheap to read repeatedly;
+- which results are immutable and safe to cache;
+- whether classification can be skipped entirely until a wear threshold is likely to change.
+
+## Open dimension 5 — visual representation
+
+Candidate approaches:
+
+### A. One additional world object per modified square/state
+
+Potential strengths:
+
+- straightforward custom sprites;
+- independent of base floor replacement.
+
+Potential costs:
+
+- object-count growth;
+- add/remove/transmit overhead;
+- cleanup complexity;
+- late-join synchronization volume.
+
+This is specifically a risk identified from reviewing the Footprints reference implementation and must be benchmarked rather than assumed.
+
+### B. Floor/tile replacement
+
+Potential strengths:
+
+- may encode state directly in the world;
+- potentially fewer auxiliary objects.
+
+Potential costs:
+
+- could interfere with base terrain identity, erosion, maps, or third-party tiles;
+- reversibility must be proven.
+
+### C. Overlay/decal-like representation
+
+Potential strengths:
+
+- may preserve underlying terrain;
+- potentially suited to tire tracks.
+
+Potential costs:
+
+- persistence and synchronization behavior unknown until tested.
+
+### D. Hybrid state-to-visual materialization
+
+Durable wear state is stored separately; nearby/loaded squares materialize only the visuals needed for the current state.
+
+Potential strengths:
+
+- could decouple world history from rendered-object count.
+
+Potential costs:
+
+- chunk load/unload lifecycle complexity;
+- late-join and cleanup behavior must be carefully validated.
+
+No rendering approach is selected yet.
+
+## Open dimension 6 — persistence
+
+Candidate strategies include:
+
+- encode state directly in durable world tile/object mutation;
+- square/object `modData`;
+- sparse server-side state keyed only to modified squares;
+- chunk/region aggregation if available and justified.
 
 Selection criteria:
 
-- persists correctly;
-- synchronizes in MP;
-- does not break map collision/pathing;
-- looks acceptable from all relevant orientations;
-- can be reversed or advanced safely;
-- does not create excessive world objects.
+- save/restart reliability;
+- late-join convergence;
+- storage growth per kilometer of traveled route;
+- cleanup/recovery cost;
+- compatibility with map and erosion systems.
 
-## Vegetation damage adapter
+There is no preferred ordering until SPIKE measurements exist.
 
-Vegetation handling should be isolated from track wear.
+## Open dimension 7 — vegetation damage
 
-Conceptual interface:
+The reference implementations reveal at least two distinct approaches worth testing.
 
-```lua
-classifyVegetation(object) -> vegetationClass | nil
-applyVehicleDamage(object, vehicleContext) -> result
-```
+### A. Native collision/property assisted
 
-Candidate result values:
+More Damaged Objects sets sprite properties such as `HitByCar` and `MinimumCarSpeedDmg`. If Build 42's native vehicle collision system can safely handle relevant vegetation classes, Happy Trails may be able to avoid continuous Lua spatial scans for those objects.
 
-```text
-none
-flattened
-removed
-destroyed-with-debris
-blocked-by-large-object
-```
+This must be independently validated.
 
-This allows the MVP to ship track wear even if vegetation mutation proves unreliable.
+### B. Explicit local spatial detection
 
-## Persistence
+Vehicle Vegetation Destruction samples squares near/in front of a moving vehicle, classifies objects, and requests server-side destruction.
 
-Preferred order of persistence strategies:
+This proves a local-scan approach is possible, but Happy Trails should test tighter geometry, better state cleanup, and lower object-enumeration cost rather than inheriting that implementation.
 
-1. encode durable state directly in vanilla world tile/object state;
-2. use square/object modData where safely persisted and synchronized;
-3. use bounded server-side tables keyed only to modified squares if required.
+### C. Hybrid
 
-Avoid a global history database unless testing proves simpler mechanisms inadequate.
+Native collision handles destructible objects; Happy Trails observes only enough state to add optional aftermath such as debris or a wear increment.
 
-## Multiplayer authority
+Vegetation damage must remain separable from the core trail system.
 
-Durable mutation should occur on the server.
+## Open dimension 8 — debris
 
-A likely flow is:
+Options include:
 
-```text
-vehicle movement observed
--> server identifies affected squares
--> server classifies terrain
--> server updates wear state
--> threshold crossing mutates world object/tile
--> normal PZ object/world synchronization propagates state
-```
+- real world inventory items;
+- decorative objects;
+- temporary/local-only visual debris where appropriate;
+- no debris in performance-focused configurations.
 
-If the server lacks sufficient high-frequency vehicle information, a client may report a candidate passage event, but the server must validate and own the resulting mutation.
+Debris should not be enabled by default until persistent-object/item cost is measured.
 
-## Performance controls
+## Open dimension 9 — recovery
 
-Candidate safeguards:
+Potential approaches:
 
-- process only moving occupied vehicles or active network vehicles;
-- skip if the vehicle remains within the same sampled tile footprint;
-- cache immutable terrain classification where safe;
-- mutate visual state only on threshold changes;
-- use sparse modified-square metadata;
-- use lazy recovery;
-- aggregate or suppress repetitive debug logs;
-- avoid debris item creation by default until cost is understood.
+- lazy timestamp evaluation when a modified square is touched;
+- recovery during chunk load;
+- integration with vanilla erosion behavior if possible;
+- no recovery for early MVP while persistence and performance are stabilized.
 
-## Module boundaries
+Continuous whole-world recovery scans are excluded.
 
-A likely implementation layout is:
+## Performance control dimensions
 
-```text
-42/media/lua/shared/HappyTrails/
-    Constants.lua
-    SurfaceClassifier.lua
-    WearModel.lua
+The eventual implementation should allow meaningful reduction of actual work through some combination of:
 
-42/media/lua/server/HappyTrails/
-    VehicleTracker_Server.lua
-    TerrainWear_Server.lua
-    VegetationDamage_Server.lua
-    Persistence_Server.lua
+- movement sampling cadence;
+- distance threshold before new geometry is processed;
+- affected-square density;
+- wear-event coalescing;
+- threshold-only visual mutation;
+- mutation batching;
+- sparse-state cleanup;
+- optional vegetation damage;
+- optional debris;
+- optional weather/snow embellishments;
+- reduced client visual density if visual state can be safely decoupled from authoritative wear.
 
-42/media/lua/client/HappyTrails/
-    DebugDisplay_Client.lua   # development only, if needed
-```
+A control that only hides visuals without reducing expensive detection/network/state work is not considered a performance optimization.
 
-This is provisional. Spike evidence may simplify or change it.
+## Reference-code lessons, not architectural decisions
+
+The supplied comparison mods demonstrate useful techniques but also potential traps:
+
+- Footprints: batching, caps, deferred visibility and tagged world objects are useful; actor scanning, LOS work, per-print object lifecycle, synchronization, and cleanup create significant complexity.
+- Vehicle Vegetation Destruction: local bounded scanning and server validation are useful; repeated square-object enumeration, coarse footprint geometry, and long-lived processed-square metadata should be improved or avoided.
+- More Damaged Objects: native `HitByCar`/`MinimumCarSpeedDmg` properties are promising; using a magic world-sound signature followed by a 5x5 object scan is too indirect to adopt without strong evidence.
+
+See [`REFERENCE-IMPLEMENTATIONS.md`](REFERENCE-IMPLEMENTATIONS.md).
 
 ## Failure behavior
 
 The mod should fail closed for destructive world mutations.
 
-If a surface or vegetation object cannot be confidently classified, Happy Trails should leave it unchanged and optionally emit a rate-limited debug diagnostic.
+If a surface or vegetation object cannot be confidently classified, Happy Trails should leave it unchanged and optionally emit a rate-limited diagnostic.
 
-If a mutation API throws an error, the current event should be abandoned without cascading changes to neighboring squares.
+If a mutation API fails, the current event should be abandoned without cascading changes to neighboring squares.
 
-## Architectural decisions requiring ADRs
+## When architecture may be selected
 
-Create an ADR when evidence supports a durable choice about:
+An architecture should not be described as preferred or final until SPIKE-001 produces comparative evidence on:
 
-- world-state representation;
-- visual mutation method;
-- MP authority/synchronization path;
-- recovery model;
-- terrain classification strategy;
-- third-party asset dependency or custom sprite pipeline.
+- movement-observation cost;
+- visual representation cost;
+- persistence behavior;
+- MP synchronization;
+- scaling with distance and simultaneous vehicles;
+- object/state growth.
+
+At that point, each durable choice should be captured in an ADR with the alternatives considered and the measurements supporting the decision.
