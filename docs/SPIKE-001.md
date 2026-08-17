@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress — comparative source review complete; runtime experiments not yet started.
+In progress — comparative mod review and Build 42.20.2 engine-source review complete; runtime experiments not yet started.
 
 ## Question
 
@@ -12,20 +12,13 @@ A second question is equally important:
 
 > Which implementation strategy provides the best client/server performance envelope without preventing higher-fidelity features later?
 
-## Why this spike exists
+## Development rule
 
-The desired gameplay mechanic combines several concerns that must work together:
+SPIKE-001 must narrow the design space with evidence. It must not turn a promising Java implementation detail into a production architecture before the relevant behavior is verified from Lua in single-player and dedicated-server multiplayer.
 
-1. observing vehicle movement at sufficient spatial resolution;
-2. classifying natural terrain and vegetation reliably;
-3. representing repeated traffic without unbounded history;
-4. mutating visual/world state persistently;
-5. synchronizing durable mutations correctly in multiplayer;
-6. doing all of the above with bounded client, server, object-count, persistence, and network cost.
+## Evidence reviewed so far
 
-Implementation should not begin by assuming any one API path works. This spike should produce evidence for later architectural decisions.
-
-## Phase 0 — comparative reference-mod review
+### Third-party comparison mods
 
 Three supplied Build 42 mod source packages were reviewed as research inputs:
 
@@ -33,333 +26,286 @@ Three supplied Build 42 mod source packages were reviewed as research inputs:
 - Workshop package `3690554902` — Vehicle Vegetation Destruction (VVD);
 - Workshop package `3413150945` — More Damaged Objects.
 
-These sources are comparison material only. No source from them has been incorporated into Happy Trails, and their licensing is not assumed to permit reuse.
+Detailed observations are recorded in [`REFERENCE-IMPLEMENTATIONS.md`](REFERENCE-IMPLEMENTATIONS.md). No source from these mods has been incorporated into Happy Trails.
 
-Detailed observations are recorded in [`REFERENCE-IMPLEMENTATIONS.md`](REFERENCE-IMPLEMENTATIONS.md).
+### Decompiled installed game build
 
-### Useful evidence from the review
+The user supplied a locally decompiled `zombie/` source tree from the exact installed game build used for development testing. The examined code identifies itself as:
 
-The review established several techniques worth independently validating:
+```text
+Project Zomboid 42.20.2
+Git revision ffe7a8a4b1
+```
 
-- Build 42 Lua can create world visual objects using `IsoObject` and add/remove them from squares.
-- Existing mods use square/object transmission methods to synchronize durable object changes.
-- Movement sampling, batching, caps, deferred work, and sparse tracking are all practical techniques, but their implementation details have major performance implications.
-- Vehicle Vegetation Destruction demonstrates a bounded local scan plus server validation model, but also illustrates risks from repeated object enumeration and session-state growth.
-- More Damaged Objects modifies sprite properties including `HitByCar` and `MinimumCarSpeedDmg`, suggesting that some collision work may be delegated to native engine behavior instead of reproduced with Lua spatial polling.
-- More Damaged Objects also shows that vehicle-damaged bushes can produce branches/twigs, but its impact-detection path uses a broad local scan triggered by a world-sound signature and should not be assumed to be the best Happy Trails approach.
-- The Footprints implementation contains substantial machinery for actor scanning, LOS gating, object creation/removal, cleanup, persistence bookkeeping, and MP synchronization. Its complexity is a warning against modeling every tire mark as an independently managed persistent object without measurement.
+The decompiled source is research material only and is not stored in this repository. Behavioral findings are summarized in [`ENGINE-RESEARCH-B42.md`](ENGINE-RESEARCH-B42.md).
 
-Separate review of the official Project Zomboid Java API documentation identified a native floor-blood/decal subsystem that warrants direct investigation. `IsoChunk` maintains bounded floor-blood collections, `IsoFloorBloodSplat` stores position/type/world-age state and implements save/load, and the network protocol includes `BloodSplatter` and `RemoveBlood` packet types. Server options also expose `BloodSplatLifespanDays`. This may provide either a reusable rendering path or, at minimum, a strong model for how Project Zomboid itself implements large numbers of lightweight environmental marks.
+## Engine findings that change experimental priority
 
-These are hypotheses and code/API observations, not validated Happy Trails design decisions.
+### 1. Native blood splats are optimized but blood-specific
+
+The engine stores floor blood in a compact bounded per-chunk queue and persists/networks it efficiently. However, the examined renderer uses a fixed 21-type blood texture table, validates splat types against that table, applies blood-specific visual aging/tinting, shares the native blood queue, and is governed by blood-decal/lifespan settings.
+
+Therefore direct reuse is no longer the leading Happy Trails rendering candidate. A small Lua smoke test is still acceptable, but we should not build around modifying/hijacking the blood system unless runtime evidence reveals a clean extension point that was not apparent in the Java implementation.
+
+### 2. Existing-object overlay sprites are a stronger candidate
+
+`IsoObject` supports an overlay sprite that is serialized with the object, invalidates cached chunk rendering when changed, and has a native multiplayer overlay-update path. A floor object may therefore be able to display a custom Happy Trails track/wear sprite without replacing the floor and without adding a second ordinary `IsoObject`.
+
+This becomes the first visual runtime experiment.
+
+### 3. Actual wheel geometry exists
+
+Vehicle script wheel definitions expose wheel count and local wheel offsets, and `BaseVehicle` can transform local positions to world positions. Happy Trails can therefore test actual left/right wheel paths instead of assuming vehicle-center or generic-width geometry.
+
+### 4. Detailed vehicle transforms already reach the server
+
+Native vehicle networking writes replicated position/orientation/physical state into the server-side `BaseVehicle`. Moving vehicles target roughly 150 ms physics-network intervals in the examined build. A server-side Happy Trails sampler may therefore need no custom client movement-reporting protocol.
+
+Because 150 ms can span multiple tiles at speed, the candidate implementation must interpolate/rasterize between previous and current wheel positions rather than processing only the current square.
+
+### 5. Native collision already performs vegetation-local work
+
+`BaseVehicle` already performs localized vehicle/object collision checks and includes native plant-collision handling. Generic object collision also interprets `HitByCar` and `MinimumCarSpeedDmg`; compatible objects can use native damage, damaged-sprite transitions, removal, and normal MP synchronization.
+
+This substantially weakens the case for a continuous custom Lua vegetation-area scanner.
+
+### 6. No general vehicle-motion Lua event was found
+
+No generic `OnVehicleUpdate`-style Lua event was found in the examined event registrations. A bounded periodic/tick sampler remains a likely candidate, but it should be judged by measured work rather than rejected merely because it uses a tick callback.
 
 ## Scope
 
-SPIKE-001 should answer the following.
+SPIKE-001 should answer the following questions before architecture is selected.
 
-### A. Vehicle observation
+### A. Lua visibility of server-side vehicle state
 
-Determine what Build 42 exposes server-side and client-side for:
+Determine in dedicated-server Lua whether we can reliably access:
 
 - active vehicles;
-- vehicle position and movement;
-- speed;
-- orientation;
-- occupied/unoccupied state;
-- vehicle script/type/mass where useful;
-- wheel positions or footprint information if available;
-- event callbacks versus polling requirements;
-- native collision callbacks/properties that may eliminate polling for vegetation damage.
+- current x/y/z and orientation;
+- current speed;
+- vehicle script;
+- wheel count;
+- wheel offsets;
+- transformed wheel world positions;
+- occupancy/driver state;
+- enough state to reject stationary/irrelevant vehicles cheaply.
 
-Measure the practical event/sampling cadence needed to avoid gaps at normal and high driving speeds.
+Measure the actual interval between meaningful server-visible vehicle transform changes while a remote client drives.
 
-### B. Competing movement-detection strategies
+### B. Vehicle-path sampling strategies
 
-At least these candidate strategies should be tested before one is selected:
+Compare at least:
 
-#### Strategy A — server-side active-vehicle sampling
+#### Strategy A — bounded server-side sampling
 
-The server samples only relevant moving vehicles, derives affected squares, and owns all wear decisions.
+```text
+native PZ vehicle replication
+-> server samples only relevant moving vehicles
+-> transform wheel positions
+-> interpolate previous/current wheel segments
+-> process only newly crossed candidate squares
+```
 
 Questions:
 
-- Does the dedicated server expose sufficiently current vehicle transforms?
-- What sampling cadence is required at highway speed?
-- Can sampling be distance-driven rather than tick-driven?
-- How much work is required per active vehicle?
+- How much work occurs per moving vehicle per second?
+- Can unchanged transforms be rejected before terrain work?
+- Can distance thresholds reduce processing further?
+- Does segment interpolation eliminate high-speed gaps?
 
 #### Strategy B — client passage reporting + server validation
 
-The driving client reports compact passage candidates; the server validates identity, vehicle ownership/driver state, position, and plausible distance before updating durable wear.
+Retain this as an alternative only if server-visible transforms are too stale or expensive. If tested, compare network and validation cost against Strategy A.
 
-Questions:
+#### Strategy C — native/event-assisted hybrid
 
-- Does this materially reduce server sampling cost?
-- Can multiple square crossings be batched into one report?
-- Can the server validate reports without recreating the same expensive scan?
-- What is the network cost at different vehicle counts and speeds?
+Use engine-native collision and other state changes wherever possible, limiting Happy Trails sampling to track-wear information that PZ does not already compute.
 
-#### Strategy C — hybrid/event-assisted
+No strategy is selected until measured.
 
-Use native engine events/properties where available, with minimal sampling only for track-wear information the engine does not expose directly.
+### C. Terrain classification
 
-Questions:
+Identify a cheap, centralized way to distinguish eligible natural surfaces from roads, interiors, water, and unknown/modded surfaces.
 
-- Can `HitByCar`, `MinimumCarSpeedDmg`, collision/world-sound events, or other native mechanisms eliminate Lua-side vegetation collision scanning?
-- Can durable track-wear state be updated only after meaningful distance or threshold crossings?
+Compare floor sprite properties, tile properties, erosion/natural-floor metadata, bounded allow/deny tables, or combinations. Unknown terrain must fail closed.
 
-No strategy is preferred until measured.
+### D. Visual representation
 
-### C. Surface classification
+Compare the following without coupling authoritative wear semantics to any one renderer.
 
-Identify a robust way to distinguish:
+#### D1 — existing floor-object overlay
 
-- grass;
-- dirt;
-- forest/natural ground;
-- paved road;
-- building/interior floors;
-- water or invalid terrain;
-- snow-covered conditions where observable.
+Priority experiment. Determine whether a custom track/wear overlay can be applied to a natural floor object and:
 
-Compare classification based on floor sprite names, sprite properties, tile properties, zones, erosion data, or another API.
+- render correctly;
+- preserve the underlying terrain;
+- avoid creating another ordinary world object;
+- synchronize to a second client;
+- persist through save/reload and dedicated-server restart;
+- appear for a late joiner;
+- be cleared/restored safely;
+- coexist with or safely decline to modify floors that already use an overlay.
 
-Measure the cost of classification and whether immutable results can be cached safely.
+#### D2 — additional `IsoObject`
 
-### D. Persistent visual mutation
+Retain as a comparison because reference mods prove it works. Measure object-count, mutation, persistence, cleanup, and late-join costs rather than assuming it is acceptable.
 
-Test plausible mutation approaches independently:
+#### D3 — floor/tile replacement
 
-- replace/change floor;
-- add/remove an `IsoObject`;
-- attach or change an overlay/sprite;
-- place a custom tile/object;
-- use a native lightweight decal/splat mechanism if accessible;
-- use another supported world-decoration mechanism.
+Test only if overlays prove inadequate. Verify reversibility and compatibility with erosion, maps, and terrain identity.
 
-For each approach record:
+#### D4 — native blood-splat path
 
-- visual result;
-- save/load persistence;
-- dedicated-server restart persistence;
-- MP synchronization;
-- collision/pathing side effects;
-- removability/reversibility;
-- number of persistent objects/state records created per kilometer of representative travel;
-- mutation and cleanup cost;
-- late-join behavior.
+Now a secondary/rejection-confirmation experiment. The Java implementation is blood-specific. Test only enough to confirm Lua accessibility and whether an unexpectedly clean extension point exists.
 
-A central question is whether Happy Trails can represent a square's current **wear state** rather than creating a separate persistent visual object for every pass.
+#### D5 — other/custom materialization paths
 
-### D1. Native floor-blood/decal subsystem investigation
-
-Project Zomboid already renders potentially large numbers of irregular floor marks without replacing the underlying terrain tile. This path should be investigated before Happy Trails commits to an `IsoObject`-based track renderer.
-
-Official API surfaces to investigate include:
-
-- `IsoChunk.FloorBloodSplats`;
-- `IsoChunk.FloorBloodSplatsFade`;
-- `IsoChunk:addBloodSplat(float x, float y, float z, int type)`;
-- `IsoFloorBloodSplat` position, type, `worldAge`, sprite-map, save, and load behavior;
-- `IsoGridSquare:splatBlood(...)`, `removeBlood(...)`, and `DoSplat(...)`;
-- network packet types `BloodSplatter` and `RemoveBlood`;
-- server option `BloodSplatLifespanDays`;
-- client blood-decal rendering settings;
-- `IsoGridSquare.bFlattenGrassEtc` as a separate native field potentially relevant to vegetation/ground presentation.
-
-Questions to answer experimentally:
-
-1. Is the floor-blood renderer callable from Lua in Build 42 server/client contexts?
-2. Can it render custom tire-track sprite assets, or is it hard-wired to the built-in blood type table?
-3. If custom sprite registration is possible, does it survive save/load and MP replication?
-4. Is floor-blood state stored directly in chunks rather than as ordinary `IsoObject`s?
-5. What are the actual queue/cap limits and eviction rules?
-6. Would Happy Trails marks compete with or evict real blood splats if the same native collection were reused?
-7. Can lifespan/fade be controlled independently for Happy Trails marks, or is decay globally tied to `BloodSplatLifespanDays` / native fade behavior?
-8. Can marks be positioned continuously within a square and oriented/selected sufficiently to form convincing wheel tracks?
-9. What is the render, save, load, and network cost of 100, 1,000, and several thousand native splats compared with equivalent `IsoObject` marks?
-10. If direct reuse is too blood-specific, can the subsystem still inform a lighter Happy Trails representation that materializes visual decals only for loaded chunks?
-
-This candidate is especially important because the engine already solves several problems Happy Trails otherwise has to solve separately: non-tile-replacing rendering, chunk-local storage, fading/age, save/load, and explicit multiplayer packet handling. None of those benefits should be assumed to generalize to custom marks until tested.
+Remain open if A–D fail or benchmarks reveal a better approach.
 
 ### E. Vegetation mutation
 
-Identify representative vanilla grass, bush, sapling, and mature-tree objects.
+Test native collision/property handling before any custom area scanner.
 
-Compare at least two approaches where feasible:
+For representative controlled vegetation objects:
 
-1. engine-assisted collision/damage using native tile properties or collision behavior;
-2. explicit local spatial detection followed by server-authoritative mutation.
+1. determine whether `HitByCar` can be applied safely;
+2. test `MinimumCarSpeedDmg`;
+3. test optional damaged-sprite transition;
+4. confirm native removal when appropriate;
+5. verify vehicle response;
+6. verify dedicated-server authority and MP synchronization;
+7. confirm no custom broad square/object scan is needed.
 
-Determine whether vegetation can be classified and safely removed/replaced from the authoritative side.
+Only if this path is insufficient should SPIKE-001 benchmark an explicit local scanner.
 
-Test debris separately. Measure persistent object/item proliferation before enabling debris by default.
+### F. Wear-state persistence
 
-### F. State storage
+The visual layer and authoritative wear state may be separate concerns.
 
-Compare bounded persistence strategies rather than assuming one:
+Compare bounded state representations such as:
 
-- durable world tile/object state only;
-- native lightweight decal/splat state if reusable;
+- state encoded directly by a durable visual/world mutation;
 - square/object `modData`;
-- sparse server-side modified-square records;
-- chunk-level or region-level aggregation if exposed and warranted.
+- sparse server-side records for modified squares;
+- chunk-level aggregation if justified by measurements.
 
-Test:
+State growth should follow currently meaningful modified terrain, not every historical pass.
 
-- save/reload;
-- server restart;
-- late client join;
-- state removal when wear returns to zero;
-- approximate storage overhead for representative routes;
-- whether cost grows with historical travel or only with currently modified terrain.
+## Runtime experiment order
 
-### G. Multiplayer authority
+### Experiment 1 — floor-overlay smoke test
 
-The server must own durable wear state and destructive mutations, but SPIKE-001 must determine the cheapest reliable way for movement evidence to reach the server.
+Use one controlled natural square and one conspicuous temporary custom sprite. No vehicle logic.
 
-Candidate flows include:
+Record:
 
-```text
-server observes movement
--> server computes passage
--> server mutates world
--> native synchronization distributes result
-```
+- original floor sprite and overlay;
+- resulting overlay;
+- object count before/after;
+- client visibility;
+- late-join result;
+- save/reload result;
+- server restart result;
+- clear/restore behavior;
+- behavior when an overlay is already occupied.
 
-and:
+### Experiment 2 — server wheel-geometry probe
 
-```text
-client observes local movement
--> client batches compact passage candidates
--> server validates/coalesces
--> server updates durable wear only on meaningful change
--> native or explicit synchronization distributes result
-```
+No terrain mutation.
 
-The spike must compare, not assume.
+Drive a vehicle from another client while the server records, at a rate-limited diagnostic cadence:
 
-## Performance test methodology
+- vehicle ID;
+- transform changes;
+- speed;
+- wheel count;
+- wheel offsets;
+- transformed wheel positions;
+- elapsed real time between server-visible changes;
+- rasterized/interpolated squares between consecutive wheel samples.
 
-### Baseline
+The critical result is whether the server alone can produce gap-free wheel paths with bounded work.
 
-Record a mod-disabled or Happy-Trails-disabled baseline using the same route, vehicle, player count, and server configuration.
+### Experiment 3 — native vegetation damage probe
 
-### Required counters
+Modify only a deliberately controlled test vegetation sprite/object. Verify below/above-threshold collision, damage/sprite/removal behavior, and MP synchronization.
 
-Prototype instrumentation should count at least:
+### Experiment 4 — minimal wear-state prototype
 
-- movement samples/events;
-- squares generated from those samples;
-- square-object enumerations;
+Only after Experiments 1–3 establish the underlying primitives should we add repeated-pass wear and compare at least two viable representations.
+
+## Performance methodology
+
+Record a Happy-Trails-disabled baseline using the same route, vehicles, clients, and server configuration.
+
+Prototype counters should include at least:
+
+- vehicles examined;
+- vehicles rejected as stationary/irrelevant;
+- meaningful vehicle samples;
+- wheel transforms;
+- interpolated segments;
+- candidate squares generated;
+- duplicate/coalesced candidate squares;
 - terrain classifications;
-- cache hits/misses where applicable;
-- wear events created versus coalesced/skipped;
-- world mutations;
-- native splat/decal entries if tested;
-- active/persistent state entries;
-- queue lengths/high-water marks;
-- custom network messages and items per batch;
-- cleanup/recovery operations.
+- square-object enumerations;
+- wear-state reads/writes;
+- visual mutations;
+- persistent state count/high-water mark;
+- custom network messages/bytes, if any;
+- cleanup/recovery operations, if any.
 
-### Stress dimensions
-
-Tests should vary:
-
-- driving speed;
-- route duration/distance;
-- repeated travel over the same route versus exploration into new terrain;
-- simultaneous moving vehicles;
-- dense vegetation versus open fields;
-- one client versus multiple clients;
-- high-fidelity versus reduced-fidelity settings once such controls exist.
-
-The goal is to identify scaling behavior, not merely prove that a short solo test works.
+Stress dimensions should include speed, route length, repeated-route versus exploration, dense vegetation, and multiple simultaneous moving vehicles.
 
 ## Prototype constraints
 
-SPIKE-001 code should be diagnostic and deliberately narrow.
+All SPIKE code must be diagnostic, bounded, and removable. It should:
 
-It should:
-
-- operate on a small controlled test area initially;
-- use conspicuous logging prefixes;
-- avoid permanent broad map mutation;
-- include a kill switch or `Enabled` guard;
-- avoid spawning large numbers of items;
-- avoid hidden background scans;
-- bound all queues/tables used by the prototype;
-- expose counters for work performed;
-- record enough information to reproduce conclusions.
-
-Suggested log prefix:
-
-```text
-[HappyTrailsSpike001]
-```
-
-## Test environment
-
-Minimum tests:
-
-1. local single-player Build 42.20+;
-2. dedicated Build 42.20+ server;
-3. two-player multiplayer test;
-4. multiple simultaneous moving vehicles if practical;
-5. late-join validation after a terrain mutation;
-6. server restart and reconnect;
-7. repeated-route versus long-distance exploration comparison.
-
-## Evidence to capture
-
-For every candidate API/path, record:
-
-- Build version;
-- Lua execution context (`client`, `server`, `shared`);
-- exact method/event/property names used;
-- representative logs/counters;
-- observed persistence behavior;
-- observed network behavior;
-- failures/exceptions;
-- CPU/frame/tick observations available from the test environment;
-- object/state growth behavior;
-- conclusion: viable, viable-with-caveats, or rejected.
+- operate on controlled areas initially;
+- use conspicuous `[HappyTrailsSpike001]` logging;
+- include a kill switch;
+- avoid broad world scans;
+- bound all queues/tables;
+- avoid persistent debris;
+- rate-limit logging;
+- expose work counters;
+- fail closed on unknown terrain/objects.
 
 ## Success criteria
 
-SPIKE-001 is successful if it identifies at least one credible implementation path that can demonstrate all of the following in a controlled test:
+SPIKE-001 succeeds when evidence demonstrates a credible path that can:
 
-1. detect a moving vehicle crossing natural terrain;
-2. identify at least one eligible terrain type and one ineligible paved type;
-3. create a visible track/wear state on the eligible terrain;
-4. persist that state through save/reload or server restart;
-5. show the same state to a second or late-joining client;
-6. demonstrate bounded processing/state growth during repeated travel;
-7. compare the selected candidate against at least one plausible alternative, including the native splat/decal path if Lua access permits it;
-8. identify a viable vegetation-damage path or explicitly split it into a later spike;
-9. identify which performance/fidelity parameters meaningfully reduce cost.
+1. observe a moving vehicle from the authoritative server with sufficient fidelity;
+2. derive a continuous affected path without high-speed gaps;
+3. classify at least one eligible natural and one ineligible paved surface;
+4. create at least one persistent non-destructive visual wear state;
+5. synchronize that state to existing and late-joining clients;
+6. survive save/reload and dedicated-server restart;
+7. show bounded CPU/work/state/network scaling in representative tests;
+8. compare the chosen visual/movement candidate against at least one alternative;
+9. validate a low-cost vegetation-damage path or explicitly defer it;
+10. identify meaningful performance/fidelity controls.
 
-## Go / no-go outcomes
+## Go / no-go
 
 ### GO
 
-Proceed to a functional v0.0.x prototype if a measured candidate implementation provides persistent/synchronized track wear with bounded scaling characteristics and acceptable gameplay responsiveness.
+Proceed to a functional v0.0.x prototype when a measured candidate provides persistent/synchronized wear with bounded scaling and acceptable responsiveness.
 
 ### CONDITIONAL GO
 
-Proceed with a reduced MVP if core track wear is viable but vegetation damage, snow, wheel-level positioning, recovery, or debris requires separate investigation.
+Proceed with track wear only if vegetation, snow, mud, debris, recovery, or other secondary features require separate investigation.
 
 ### NO-GO / REDESIGN
 
-Redesign the concept if durable visual mutation cannot be synchronized/persisted cleanly, if every viable visual representation requires unacceptable object/state proliferation, or if movement detection cannot be bounded to an acceptable performance envelope.
+Redesign if durable visual wear cannot be persisted/synchronized cleanly, if viable representations require unacceptable object/state growth, or if vehicle path observation cannot be bounded to an acceptable performance envelope.
 
-## Deliverables
+## Deliverables at completion
 
-At completion:
-
-- update this document with measured results;
-- update `docs/DESIGN.md` only with validated constraints and selected options;
-- update `docs/REQUIREMENTS.md` where feasibility changes scope or adds numeric budgets;
-- update `CHANGELOG.md`;
-- create ADR(s) only for decisions supported by the spike;
-- create follow-on spikes only for unresolved questions that materially block implementation.
+- measured results added here;
+- `docs/DESIGN.md` updated with validated constraints;
+- `docs/REQUIREMENTS.md` updated with numeric budgets where evidence supports them;
+- `CHANGELOG.md` updated;
+- ADRs created only for durable choices supported by measurements;
+- follow-on spikes created only for unresolved blocking questions.
