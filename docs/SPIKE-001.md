@@ -49,7 +49,9 @@ The review established several techniques worth independently validating:
 - More Damaged Objects also shows that vehicle-damaged bushes can produce branches/twigs, but its impact-detection path uses a broad local scan triggered by a world-sound signature and should not be assumed to be the best Happy Trails approach.
 - The Footprints implementation contains substantial machinery for actor scanning, LOS gating, object creation/removal, cleanup, persistence bookkeeping, and MP synchronization. Its complexity is a warning against modeling every tire mark as an independently managed persistent object without measurement.
 
-These are hypotheses and code observations, not validated Happy Trails design decisions.
+Separate review of the official Project Zomboid Java API documentation identified a native floor-blood/decal subsystem that warrants direct investigation. `IsoChunk` maintains bounded floor-blood collections, `IsoFloorBloodSplat` stores position/type/world-age state and implements save/load, and the network protocol includes `BloodSplatter` and `RemoveBlood` packet types. Server options also expose `BloodSplatLifespanDays`. This may provide either a reusable rendering path or, at minimum, a strong model for how Project Zomboid itself implements large numbers of lightweight environmental marks.
+
+These are hypotheses and code/API observations, not validated Happy Trails design decisions.
 
 ## Scope
 
@@ -132,6 +134,7 @@ Test plausible mutation approaches independently:
 - add/remove an `IsoObject`;
 - attach or change an overlay/sprite;
 - place a custom tile/object;
+- use a native lightweight decal/splat mechanism if accessible;
 - use another supported world-decoration mechanism.
 
 For each approach record:
@@ -147,6 +150,37 @@ For each approach record:
 - late-join behavior.
 
 A central question is whether Happy Trails can represent a square's current **wear state** rather than creating a separate persistent visual object for every pass.
+
+### D1. Native floor-blood/decal subsystem investigation
+
+Project Zomboid already renders potentially large numbers of irregular floor marks without replacing the underlying terrain tile. This path should be investigated before Happy Trails commits to an `IsoObject`-based track renderer.
+
+Official API surfaces to investigate include:
+
+- `IsoChunk.FloorBloodSplats`;
+- `IsoChunk.FloorBloodSplatsFade`;
+- `IsoChunk:addBloodSplat(float x, float y, float z, int type)`;
+- `IsoFloorBloodSplat` position, type, `worldAge`, sprite-map, save, and load behavior;
+- `IsoGridSquare:splatBlood(...)`, `removeBlood(...)`, and `DoSplat(...)`;
+- network packet types `BloodSplatter` and `RemoveBlood`;
+- server option `BloodSplatLifespanDays`;
+- client blood-decal rendering settings;
+- `IsoGridSquare.bFlattenGrassEtc` as a separate native field potentially relevant to vegetation/ground presentation.
+
+Questions to answer experimentally:
+
+1. Is the floor-blood renderer callable from Lua in Build 42 server/client contexts?
+2. Can it render custom tire-track sprite assets, or is it hard-wired to the built-in blood type table?
+3. If custom sprite registration is possible, does it survive save/load and MP replication?
+4. Is floor-blood state stored directly in chunks rather than as ordinary `IsoObject`s?
+5. What are the actual queue/cap limits and eviction rules?
+6. Would Happy Trails marks compete with or evict real blood splats if the same native collection were reused?
+7. Can lifespan/fade be controlled independently for Happy Trails marks, or is decay globally tied to `BloodSplatLifespanDays` / native fade behavior?
+8. Can marks be positioned continuously within a square and oriented/selected sufficiently to form convincing wheel tracks?
+9. What is the render, save, load, and network cost of 100, 1,000, and several thousand native splats compared with equivalent `IsoObject` marks?
+10. If direct reuse is too blood-specific, can the subsystem still inform a lighter Happy Trails representation that materializes visual decals only for loaded chunks?
+
+This candidate is especially important because the engine already solves several problems Happy Trails otherwise has to solve separately: non-tile-replacing rendering, chunk-local storage, fading/age, save/load, and explicit multiplayer packet handling. None of those benefits should be assumed to generalize to custom marks until tested.
 
 ### E. Vegetation mutation
 
@@ -166,6 +200,7 @@ Test debris separately. Measure persistent object/item proliferation before enab
 Compare bounded persistence strategies rather than assuming one:
 
 - durable world tile/object state only;
+- native lightweight decal/splat state if reusable;
 - square/object `modData`;
 - sparse server-side modified-square records;
 - chunk-level or region-level aggregation if exposed and warranted.
@@ -221,6 +256,7 @@ Prototype instrumentation should count at least:
 - cache hits/misses where applicable;
 - wear events created versus coalesced/skipped;
 - world mutations;
+- native splat/decal entries if tested;
 - active/persistent state entries;
 - queue lengths/high-water marks;
 - custom network messages and items per batch;
@@ -299,7 +335,7 @@ SPIKE-001 is successful if it identifies at least one credible implementation pa
 4. persist that state through save/reload or server restart;
 5. show the same state to a second or late-joining client;
 6. demonstrate bounded processing/state growth during repeated travel;
-7. compare the selected candidate against at least one plausible alternative;
+7. compare the selected candidate against at least one plausible alternative, including the native splat/decal path if Lua access permits it;
 8. identify a viable vegetation-damage path or explicitly split it into a later spike;
 9. identify which performance/fidelity parameters meaningfully reduce cost.
 
