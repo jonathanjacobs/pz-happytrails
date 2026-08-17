@@ -5,6 +5,7 @@ Development and reference documentation lives in this directory.
 - [`REQUIREMENTS.md`](REQUIREMENTS.md) — canonical functional requirements, scope boundaries, performance/scalability requirements, and MVP acceptance criteria.
 - [`DESIGN.md`](DESIGN.md) — open design space: alternatives, constraints, performance tradeoffs, and questions. This is intentionally not a committed architecture during pre-alpha feasibility work.
 - [`SPIKE-001.md`](SPIKE-001.md) — Build 42 feasibility and comparative performance investigation for vehicle observation, terrain mutation, persistence, synchronization, and vegetation damage.
+- [`ENGINE-RESEARCH-B42.md`](ENGINE-RESEARCH-B42.md) — behavioral/API findings from inspection of the supplied locally decompiled Project Zomboid 42.20.2 engine source. Decompiled game source itself is not stored in this repository.
 - [`REFERENCE-IMPLEMENTATIONS.md`](REFERENCE-IMPLEMENTATIONS.md) — comparative review of supplied third-party B42 mods used only as research inputs and performance cautionary examples.
 - [`TESTING.md`](TESTING.md) — repeatable single-player and dedicated-server test procedures and evidence standards.
 - [`adr/`](adr/) — architecture decision records for significant technical choices only after spike evidence supports a decision.
@@ -20,10 +21,11 @@ The documentation order for pre-alpha work is:
 
 ```text
 requirements and scope
--> comparative evidence / spikes
+-> comparative evidence / engine research
+-> focused spikes
 -> measured alternatives
 -> ADR-backed architecture decisions
 -> implementation
 ```
 
-Reference code is not treated as project code. New experimental questions should be captured as spike work; durable choices should be recorded as ADRs only after evidence exists.
+Reference code and decompiled game source are not treated as project code. New experimental questions should be captured as spike work; durable choices should be recorded as ADRs only after evidence exists.
