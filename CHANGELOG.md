@@ -4,13 +4,29 @@ Human-readable history of notable Happy Trails changes. Git remains authoritativ
 
 ## [Unreleased]
 
+### Added
+- Comparative source review of three supplied Build 42 reference mods: Footprints (`3457632586`), Vehicle Vegetation Destruction (`3690554902`), and More Damaged Objects (`3413150945`).
+- `docs/REFERENCE-IMPLEMENTATIONS.md` documenting useful API clues, performance risks, and questions promoted into SPIKE-001 without incorporating third-party source code.
+- Explicit SPIKE-001 comparison of server-side vehicle sampling, client passage reporting, and native/event-assisted hybrid approaches.
+- Required performance instrumentation for samples/events, affected squares, object enumeration, state growth, queue high-water marks, mutations, and custom network traffic.
+
+### Changed
+- Reframed performance as a first-class product requirement rather than a later optimization step.
+- Clarified that Happy Trails remains requirements- and evidence-driven and has not selected a production architecture.
+- Reworked `docs/DESIGN.md` into an open design-space document rather than a provisional module architecture.
+- Split required MVP behavior from secondary features such as vegetation destruction, debris, snow/weather effects, exact wheel positioning, and recovery.
+- Added the requirement that at least one plausible implementation alternative be benchmarked before the functional MVP architecture is accepted.
+- Added graceful fidelity reduction as a requirement: performance settings must reduce actual processing/object/network work rather than only hide graphics.
+- Added explicit lifecycle/bounding requirements for all runtime tables, queues, persistent state, and cleanup mechanisms.
+- Added investigation of native `HitByCar` / `MinimumCarSpeedDmg` sprite properties as a potential way to offload vegetation collision work to the engine.
+
 ### Planned
-- Complete SPIKE-001 to validate Build 42 vehicle-position/event access, terrain/object mutation, persistence, and multiplayer synchronization options.
-- Identify a minimal representation for track wear that does not require unbounded per-square world state.
-- Validate whether vegetation destruction can be implemented with vanilla object/tile APIs and appropriate vehicle collision information.
-- Determine whether tire-track visuals can use existing tiles/overlays, custom sprites, or another supported rendering approach.
-- Define recovery/decay behavior for lightly traveled routes after feasibility is established.
-- Establish a repeatable dedicated-server test matrix before implementing the functional MVP.
+- Establish a repeatable baseline with Happy Trails disabled before runtime experiments begin.
+- Run SPIKE-001 vehicle-observation experiments and measure server-side sampling versus client/hybrid alternatives.
+- Validate the native vehicle-hit property path for representative bushes/saplings before designing a custom vegetation scanner.
+- Compare track visual representations by persistence, MP convergence, object count, late-join cost, and reversibility.
+- Identify a minimal representation for progressive wear that does not require unbounded per-pass history or one persistent object per tire impression.
+- Add explicit numeric performance budgets to `docs/REQUIREMENTS.md` only after baseline and candidate measurements exist.
 
 ## [0.0.1] - 2026-08-16
 
