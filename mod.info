@@ -1,0 +1,6 @@
+id=pz-happytrails
+name=Happy Trails
+description=Build 42 mod project for persistent vehicle tracks, progressive terrain wear, and vegetation damage from repeated travel.
+author=Jonathan Jacobs
+pzversion=42
+modversion=0.0.1
