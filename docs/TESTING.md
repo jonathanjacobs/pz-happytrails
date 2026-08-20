@@ -4,158 +4,197 @@
 
 This document defines how Happy Trails experiments and releases should be validated. Pre-alpha testing should privilege reproducible evidence over subjective impressions.
 
+The active investigation is [`spikes/SPIKE-001-environmental-wear-feasibility.md`](spikes/SPIKE-001-environmental-wear-feasibility.md).
+
 ## Test environments
 
-Development should use, as appropriate:
+Use, as appropriate:
 
 - local single-player Build 42.20+;
-- local hosted multiplayer where useful;
+- local hosted multiplayer;
 - dedicated server Build 42.20+;
 - two or more clients for synchronization tests.
 
-Record the exact Project Zomboid build for every material result.
+Record the exact Project Zomboid build, Happy Trails commit/version, and relevant server settings for every material result.
 
 ## Evidence standard
 
-For any claim about engine behavior, capture enough evidence to reproduce it:
+For any claim about engine behavior, capture:
 
-- test version/commit;
+- exact test version/commit;
 - server settings relevant to the test;
-- mod version;
-- map location or controlled test surface;
+- map location/test surface;
 - exact player/vehicle actions;
-- relevant client and server logs;
-- screenshots where visual state matters;
-- save/restart behavior where persistence matters.
+- relevant client/server logs;
+- screenshots/video where visual behavior matters;
+- object/state counts when performance matters;
+- save/restart and late-join behavior where persistence matters.
 
-A visual impression alone is not sufficient evidence for synchronization or persistence.
+A visual impression alone is not sufficient evidence for synchronization, persistence, or performance.
 
-## Baseline test matrix
+## SPIKE-001 experiment order
 
-### 1. Load and initialization
+### 1. Corpse-drag blood-trail trace
+
+Use vanilla corpse dragging as a reference behavior and determine, through source tracing plus controlled observation where possible:
+
+- how frequently/at what distance new floor-blood splats are emitted;
+- whether deposition is distance-, tick-, animation-, or event-driven;
+- whether movement gaps are interpolated;
+- approximate spatial mark density required for a continuous-looking trail.
+
+Do not modify the vanilla blood system.
+
+### 2. Custom transient-decal smoke test
+
+Using one conspicuous temporary Happy Trails test asset, determine whether Lua can create a lightweight ground mark with:
+
+- sub-tile x/y placement;
+- direction/rotation or directional variants;
+- alpha/tint control;
+- bounded lifetime;
+- safe cleanup;
+- multiplayer visibility;
+- save/reload behavior if the candidate is intended to persist through unload/reload;
+- no full ordinary `IsoObject` per impression, if the candidate claims to avoid that cost.
+
+Record object counts before/after.
+
+### 3. Persistent floor-overlay smoke test
+
+Use one controlled natural square. Record:
+
+- original floor sprite/overlay;
+- resulting overlay;
+- object count before/after;
+- visibility to a second client;
+- late-join result;
+- save/reload result;
+- dedicated-server restart result;
+- clear/restore behavior;
+- behavior when the overlay slot is already occupied.
+
+### 4. Server wheel-geometry probe
+
+No terrain mutation.
+
+Drive a vehicle from a remote client while the server records, at a bounded diagnostic cadence:
+
+- vehicle ID;
+- position/orientation changes;
+- speed;
+- wheel count/offsets;
+- transformed wheel positions;
+- elapsed real time and distance between meaningful server-visible changes;
+- interpolated/rasterized path segments.
+
+Verify that representative left/right wheel paths can remain gap-free at increasing speeds.
+
+### 5. Terrain classification
+
+Create a controlled route containing natural, paved, indoor, water/invalid, and unknown/modded surfaces.
 
 Verify:
-
-- mod loads without Lua errors;
-- stable Mod ID is `pz-happytrails`;
-- expected modules load in the correct client/server context;
-- disabling the mod leaves the world unchanged.
-
-### 2. Surface classification
-
-Create a controlled route containing representative terrain types.
-
-For each square, record the classifier result and verify that:
 
 - eligible natural surfaces are recognized;
-- paved roads are rejected;
-- interior/building floors are rejected;
-- water/invalid squares are rejected;
-- unknown third-party surfaces fail closed.
+- hard surfaces do not accumulate persistent terrain wear;
+- hard surfaces remain eligible for temporary carried-material marks where that feature is enabled;
+- water/interiors/unknown destructive cases fail closed.
 
-### 3. Single-pass behavior
+### 6. Repeated-pass progression
 
-Drive once across an eligible route.
-
-Verify:
-
-- only the intended footprint is sampled;
-- no duplicate wear is applied while stationary;
-- adjacent untouched squares remain unchanged;
-- a single pass produces only the configured low-level disturbance.
-
-### 4. Repeated-pass progression
-
-Drive the same route repeatedly using a controlled number of passes.
-
-Record the wear state after each threshold.
+Once a minimal wear prototype exists, drive the same route repeatedly.
 
 Verify:
 
-- progression is monotonic while traffic continues;
-- visual state changes only at intended thresholds;
-- repeated sampling of the same physical passage does not inflate wear unexpectedly;
+- a single pass creates only transient/light disturbance;
+- repeated traffic increases persistent wear monotonically;
+- persistent state changes only at intended thresholds;
+- repeated sampling of one physical passage is coalesced;
+- established wear remains after transient marks fade;
 - direction changes do not corrupt state.
 
-### 5. Persistence
+### 7. Persistence and multiplayer convergence
 
-After creating visible wear:
+After creating established wear:
 
-1. save and exit;
-2. reload the world;
-3. verify wear and stored metadata;
-4. on a dedicated server, restart the server;
-5. reconnect and verify again.
+1. save/exit and reload;
+2. restart the dedicated server;
+3. verify the authoritative state remains;
+4. have Client A add additional wear;
+5. reconnect a previously absent Client B;
+6. verify Client B receives the current state without manual repair/reload.
 
-### 6. Multiplayer convergence
+### 8. Transient aging / bounded lifecycle
 
-With two clients:
+For each transient-mark candidate:
 
-1. Client A drives the test route;
-2. Client B observes from nearby;
-3. compare resulting terrain state;
-4. disconnect Client B;
-5. add additional wear with Client A;
-6. reconnect Client B;
-7. verify the current authoritative state is visible.
+- record creation world age;
+- verify appearance/expiry is derived lazily from elapsed time rather than requiring a whole-world timer scan;
+- verify the per-chunk/region record count has a hard or effectively hard upper bound;
+- stress repeated driving in one chunk and verify old marks are expired/coalesced rather than growing forever.
 
-No manual client reload should be required beyond normal joining/loading semantics.
+### 9. Vegetation damage
 
-### 7. Vegetation damage
+Test native vehicle/object collision behavior first. For every supported vegetation class:
 
-For every supported vegetation class:
+- identify the exact object/sprite/property set;
+- test below/above damage thresholds;
+- verify flatten/damage/removal behavior;
+- verify vehicle response;
+- verify mature/protected objects remain safe;
+- verify synchronized removal/damaged sprite state in MP;
+- verify no duplicate debris.
 
-- identify the exact object/sprite;
-- test low-speed contact;
-- test higher-speed contact if speed matters;
-- verify whether the object is flattened, removed, or ignored;
-- verify mature trees and protected objects remain safe;
-- verify no duplicate debris is created in MP.
-
-### 8. Recovery
+### 10. Recovery
 
 Once recovery exists:
 
-- establish a known wear score/state;
+- establish known persistent wear;
 - advance world time without traffic;
-- revisit/reload the square;
-- verify lazy recovery produces the expected state;
-- drive the route again and confirm wear resumes from the recovered state.
+- revisit/reload the area;
+- verify lazy recovery/hysteresis;
+- verify deep/established wear recovers substantially more slowly than light disturbance;
+- drive the abandoned route again and confirm previous disturbance can be re-established naturally.
 
-### 9. Performance
+### 11. Performance
 
-Test a representative active multiplayer scenario rather than only a single stationary vehicle.
+Record a Happy-Trails-disabled baseline using the same route/vehicles/clients.
 
-Measure or observe:
+Measure at least:
 
-- server log/event frequency;
-- number of processed vehicle samples;
-- number of state-changing mutations;
-- amount of stored modified-square state;
-- obvious server tick or driving stutter;
-- network message volume if custom networking is used.
+- vehicles examined and rejected;
+- meaningful vehicle samples;
+- wheel transforms/interpolated segments;
+- transient marks emitted/expired/high-water count;
+- candidate squares generated/coalesced;
+- terrain classifications;
+- persistent state reads/writes/high-water count;
+- visual mutations;
+- custom network traffic if any;
+- cleanup/recovery operations;
+- server/client stutter or tick impact.
 
-Diagnostic logging should be disabled for performance comparisons when verbose logs themselves materially affect results.
+Performance controls must reduce actual work/state, not merely hide graphics.
 
 ## Regression checklist
 
 Before promoting a functional build:
 
-- no Lua errors in normal driving;
-- paved roads remain unchanged;
-- terrain wear persists;
-- MP clients converge;
-- late join works;
-- no duplicate debris objects/items;
-- no uncontrolled wear while parked;
-- no mature-tree deletion from ordinary passage;
-- disable/fail-safe behavior stops further mutation;
-- version markers agree across `VERSION`, root `mod.info`, and `42/mod.info`;
-- README, requirements, testing notes, and changelog reflect the tested behavior.
+- no Lua errors in ordinary driving;
+- no mark creation while stationary;
+- paved roads are not permanently deformed;
+- transient marks expire/bound correctly;
+- established wear persists after transient marks disappear;
+- MP clients converge and late join works;
+- save/restart persistence works;
+- no uncontrolled ordinary-world object growth;
+- no mature-tree deletion from normal passage;
+- disabling the mod stops further processing;
+- `VERSION`, `Contents/mods/pz-happytrails/mod.info`, and `Contents/mods/pz-happytrails/42/mod.info` agree;
+- README, requirements, roadmap, validation history, testing notes, and changelog reflect the tested behavior.
 
 ## Debug logging conventions
-
-Development builds should use clear prefixes such as:
 
 ```text
 [HappyTrails][SERVER]
@@ -163,4 +202,4 @@ Development builds should use clear prefixes such as:
 [HappyTrailsSpike001]
 ```
 
-Logs should emphasize state transitions and evidence rather than flooding every tick. High-frequency sampling logs should be explicitly opt-in.
+High-frequency diagnostics must be opt-in, rate-limited, and bounded.
