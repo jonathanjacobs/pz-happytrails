@@ -1,115 +1,146 @@
-# Happy Trails for Project Zomboid B42
+# Happy Trails
+
+**Dynamic tracks and terrain wear for Project Zomboid Build 42.**
+
+Status: **Pre-alpha / feasibility investigation**  
+Current development version: **v0.0.1**  
+Current research baseline: **Project Zomboid 42.20.x**
 
 Happy Trails is a Project Zomboid Build 42 mod project focused on making repeated survivor and vehicle travel leave a persistent, visible mark on the world.
 
-The intended system allows commonly traveled routes to evolve from untouched terrain into flattened vegetation, tire marks, ruts, worn paths, and eventually recognizable informal roads. Vehicle movement may also crush small vegetation, break saplings, and leave appropriate debris behind.
+Project Zomboid already models nature reclaiming civilization through erosion. Happy Trails explores the inverse: repeated human activity gradually reshapes the landscape.
 
-> **Development status:** pre-alpha / feasibility stage. The repository currently contains project structure, requirements, design notes, and test planning. No functional Happy Trails gameplay implementation has been validated yet.
+## What it is intended to do
 
-## Core concept
+Planned behavior includes:
 
-Project Zomboid already models the world reclaiming civilization through erosion. Happy Trails explores the inverse: survivors gradually reshape the landscape through repeated use.
+- fresh vehicle tracks on suitable natural terrain;
+- progressive wear from repeated traffic rather than a one-pass binary mutation;
+- flattened grass, exposed soil, wheel ruts, and established informal trails;
+- temporary mud/snow/material tracks that can fade independently of persistent wear;
+- vegetation damage from vehicle contact where a safe native path exists;
+- save/restart and dedicated-server persistence;
+- multiplayer synchronization and late-join convergence;
+- slow recovery/regrowth on abandoned routes;
+- bounded transient/persistent state so travel history cannot grow without limit.
 
-Planned behaviors include:
+No functional gameplay implementation has yet passed SPIKE-001. The repository currently contains the package skeleton, requirements, architecture research, testing plan, and formal feasibility investigation.
 
-- vehicle tracks on suitable natural terrain;
-- progressive wear from repeated traffic rather than a single binary terrain change;
-- flattened grass and vegetation along frequently traveled routes;
-- dirt, mud, snow, and grass-specific visual states where technically feasible;
-- destruction of small bushes, saplings, and similar vegetation by vehicles;
-- broken branches or other debris where appropriate;
-- persistence across multiplayer sessions;
-- gradual recovery of lightly used routes where practical;
-- server-authoritative state changes for multiplayer consistency;
-- performance safeguards so traffic history does not become an unbounded world-state cost.
+## Current design insight: transient marks vs persistent wear
 
-The exact mechanic is intentionally not fixed until the relevant Build 42 Lua hooks, tile/object mutation APIs, persistence behavior, and multiplayer synchronization paths have been validated.
+Build 42.20.3's vanilla floor-blood system provides a strong architectural precedent. PZ stores floor blood as compact sub-tile records in a bounded per-chunk queue, timestamps them with world age, serializes them with the chunk, and calculates visual aging lazily from elapsed world time.
+
+Happy Trails is therefore investigating a two-layer model:
+
+```text
+TRANSIENT MARKS
+fresh tire impressions / mud / snow / flattened vegetation
+-> high spatial fidelity
+-> bounded lifecycle
+-> age-based fading
+
+PERSISTENT TERRAIN WEAR
+worn grass / exposed dirt / established ruts and trails
+-> sparse server-authoritative state
+-> survives reload/restart
+-> slow abandonment recovery
+```
+
+The blood system is a design reference, not a plan to hijack vanilla blood sprites or tables.
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/spikes/SPIKE-001-environmental-wear-feasibility.md`](docs/spikes/SPIKE-001-environmental-wear-feasibility.md).
 
 ## Current development phase
 
-The first development milestone is a technical feasibility spike. It must establish whether Build 42 exposes enough information and mutation capability to implement the mechanic cleanly without brittle engine hacks.
+The active milestone is SPIKE-001. It must determine whether Build 42 exposes a clean, bounded path for:
 
-See:
+- server-observed vehicle/wheel geometry;
+- gap-free path interpolation at driving speed;
+- lightweight custom sub-tile ground marks;
+- persistent non-destructive wear presentation/state;
+- terrain classification;
+- native vegetation damage;
+- save/restart, multiplayer, and late-join behavior;
+- acceptable CPU/state/network scaling.
 
-- [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) — canonical requirements and MVP acceptance criteria.
-- [`docs/DESIGN.md`](docs/DESIGN.md) — working architecture and data-model concepts.
-- [`docs/SPIKE-001.md`](docs/SPIKE-001.md) — first feasibility investigation and go/no-go criteria.
-- [`docs/TESTING.md`](docs/TESTING.md) — repeatable test strategy and evidence requirements.
-- [`CHANGELOG.md`](CHANGELOG.md) — human-readable development history.
+The full project roadmap is maintained only in [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Stable project identity
 
-Repository:
+Repository and stable Project Zomboid Mod ID:
 
 ```text
 pz-happytrails
 ```
 
-Stable Project Zomboid Mod ID:
+## Repository/package layout
 
-```text
-pz-happytrails
-```
-
-Preferred local mod folder:
-
-```text
-pz-happytrails/
-```
-
-The repo and Mod ID intentionally match so a GitHub source archive can be renamed predictably for local or dedicated-server testing.
-
-## Repository layout
+Happy Trails now follows the same repository structure used by Enshrouded Sleep and intended as the standard template for these Project Zomboid mod projects:
 
 ```text
 pz-happytrails/
 ├── .github/
-├── 42/
-│   ├── mod.info
-│   └── media/
-├── common/
-│   └── media/
+├── Contents/
+│   └── mods/
+│       └── pz-happytrails/
+│           ├── mod.info
+│           ├── 42/
+│           │   ├── mod.info
+│           │   └── media/
+│           └── common/
+│               └── media/
 ├── docs/
 │   ├── adr/
-│   ├── DESIGN.md
+│   ├── spikes/
+│   ├── ARCHITECTURE.md
+│   ├── DEPLOYMENT.md
+│   ├── PZ_MODDING_POLICY.md
 │   ├── README.md
+│   ├── RELEASE_CHECKLIST.md
 │   ├── REQUIREMENTS.md
-│   ├── SPIKE-001.md
-│   └── TESTING.md
-├── .gitignore
+│   ├── ROADMAP.md
+│   ├── TESTING.md
+│   └── VALIDATION_HISTORY.md
+├── ASSET_LICENSE.md
 ├── CHANGELOG.md
+├── COMPLIANCE.md
 ├── LICENSE
 ├── NOTICE
 ├── README.md
-├── VERSION
-└── mod.info
+├── THIRD_PARTY_NOTICES.md
+└── VERSION
 ```
 
-This structure follows the same general conventions used across the related Project Zomboid mod projects maintained in this GitHub account: root-level project metadata, explicit Build 42 content, a human-readable changelog, semantic development versions, canonical documentation under `docs/`, and Apache 2.0 licensing with a NOTICE file.
+`Contents/` is the distributable Project Zomboid/Workshop payload. Project documentation, research notes, licensing, and development material remain outside it.
 
 ## Versioning
 
-Development uses semantic-style versions:
-
 ```text
 0.0.x  experimental spikes, diagnostics, and pre-alpha implementation
-0.1.x  first functional MVP and stabilization work
-1.x    stable public releases after the behavior and compatibility contract is mature
+0.1.x  functional alpha/beta stabilization
+1.x    stable public releases after behavior and compatibility are mature
 ```
 
-`VERSION`, root `mod.info`, and `42/mod.info` should be updated together whenever the project version changes.
+`VERSION` and package `mod.info` files should be updated together whenever the project version changes.
 
 ## Development principles
 
-Happy Trails should prefer documented or experimentally validated Project Zomboid APIs over invasive workarounds. Multiplayer behavior should be server-authoritative where persistent world state is involved. Every non-trivial Lua function should be documented sufficiently for another developer to understand its inputs, outputs, side effects, failure modes, and important control-flow decisions.
+Happy Trails should prefer documented or experimentally validated Project Zomboid APIs over invasive workarounds. Persistent world changes should be server-authoritative. High-frequency work must be bounded and measurable. Whole-world scans and unbounded historical records are out of scope.
 
-Experiments should be captured as spike documents rather than allowed to become undocumented prototype code. Significant architectural decisions should be recorded under [`docs/adr/`](docs/adr/).
+Experiments belong under [`docs/spikes/`](docs/spikes/). Durable architecture choices belong under [`docs/adr/`](docs/adr/). Detailed evidence belongs in [`docs/VALIDATION_HISTORY.md`](docs/VALIDATION_HISTORY.md).
 
-## Compatibility target
+## Documentation
 
-Initial development targets Project Zomboid Build 42.20 or later. Exact minimum compatibility may change as the feasibility work identifies required APIs.
-
-The project should avoid unnecessary assumptions about specific vehicle, map, vegetation, or graphical mods. Compatibility with major content mods will be evaluated after the vanilla mechanic is validated.
+- [`docs/README.md`](docs/README.md) — documentation index
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — single canonical roadmap
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — architecture/design space
+- [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) — canonical requirements and acceptance criteria
+- [`docs/TESTING.md`](docs/TESTING.md) — test strategy
+- [`docs/VALIDATION_HISTORY.md`](docs/VALIDATION_HISTORY.md) — accumulated evidence
+- [`docs/spikes/`](docs/spikes/) — formal investigations
+- [`docs/adr/`](docs/adr/) — architecture decision records
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — packaging/test deployment/rollback guidance
+- [`CHANGELOG.md`](CHANGELOG.md) — human-readable change history
 
 ## License
 
@@ -117,4 +148,4 @@ Copyright 2026 Jonathan Jacobs.
 
 Licensed under the **Apache License, Version 2.0**. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
 
-Project Zomboid is developed by The Indie Stone. This project is an independent community mod and is not affiliated with or endorsed by The Indie Stone.
+Project Zomboid is developed by The Indie Stone. Happy Trails is an independent community mod and is not affiliated with or endorsed by The Indie Stone.
